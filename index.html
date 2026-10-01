@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f62d76" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Pink October Camera</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #111; font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    body { display: flex; align-items: center; justify-content: center; }
+    #app {
+      width: min(100vw, 1080px);
+      height: 100dvh;
+      display: flex; flex-direction: column;
+      background: #111;
+    }
+    .stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 9 / 16;
+      max-height: calc(100dvh - 105px);
+      margin: auto;
+      display: flex; align-items: center; justify-content: center;
+      background: #111; overflow: hidden;
+    }
+    #video, #photo, #template {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: fill;
+    }
+    #video { transform: scaleX(-1); }
+    #template { pointer-events: none; object-fit: contain; }
+    #photo { display: none; object-fit: contain; background: #111; }
+    .controls {
+      height: 105px; flex: 0 0 105px;
+      display: flex; align-items: center; justify-content: space-around;
+      background: rgba(20,20,20,.98);
+      padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
+    }
+    button {
+      border: 0; color: white; background: #333;
+      width: 52px; height: 52px; border-radius: 50%;
+      font-size: 22px; cursor: pointer;
+    }
+    button:active { transform: scale(.94); }
+    #capture {
+      width: 72px; height: 72px; background: white;
+      border: 6px solid #f62d76;
+      color: #f62d76; font-size: 28px;
+    }
+    .actionbar {
+      display: none; gap: 14px; justify-content: center;
+      padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+      background: #111;
+    }
+    .actionbar button {
+      width: auto; height: 48px; border-radius: 24px;
+      padding: 0 22px; font-size: 15px; font-weight: 700;
+    }
+    #download { background: #f62d76; }
+    #retake { background: #444; }
+    .message {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      color: white; text-align: center; padding: 18px;
+      display: none; z-index: 5;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+<div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="photo" alt="Captured photo" />
+    <img id="template" src="template.png" alt="Photo template" />
+    <div id="message" class="message"></div>
+  </div>
+
+  <div id="controls" class="controls">
+    <button id="switch" title="Switch camera" aria-label="Switch camera">↻</button>
+    <button id="capture" title="Take photo" aria-label="Take photo">●</button>
+    <button id="flash" title="Flash is not controlled by this browser" aria-label="Info">i</button>
+  </div>
+
+  <div id="actions" class="actionbar">
+    <button id="retake">Retake</button>
+    <button id="download">Download photo</button>
+  </div>
+</div>
+
+<canvas id="canvas" width="1080" height="1920" style="display:none"></canvas>
+
+<script>
+const video = document.getElementById('video');
+const photo = document.getElementById('photo');
+const template = document.getElementById('template');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const controls = document.getElementById('controls');
+const actions = document.getElementById('actions');
+const message = document.getElementById('message');
+
+let stream = null;
+let facingMode = 'user';
+let capturedData = null;
+
+function showMessage(text) {
+  message.textContent = text;
+  message.style.display = 'block';
+}
+function hideMessage() { message.style.display = 'none'; }
+
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  hideMessage();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode,
+        width: { ideal: 1080 },
+        height: { ideal: 1920 }
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+  } catch (err) {
+    showMessage('Camera access is required. Please allow camera permission and open this page over HTTPS.');
+    console.error(err);
+  }
+}
+
+function drawVideoCoverToCanvas() {
+  const cw = canvas.width, ch = canvas.height;
+  const vw = video.videoWidth, vh = video.videoHeight;
+
+  // Fill the exact 1080×1920 template canvas without changing its aspect ratio.
+  // Crop only the excess from the camera feed so the output and template are identical in size.
+  const targetRatio = cw / ch;
+  const sourceRatio = vw / vh;
+  let sx = 0, sy = 0, sw = vw, sh = vh;
+
+  if (sourceRatio > targetRatio) {
+    sw = vh * targetRatio;
+    sx = (vw - sw) / 2;
+  } else {
+    sh = vw / targetRatio;
+    sy = (vh - sh) / 2;
+  }
+
+  ctx.save();
+  if (facingMode === 'user') {
+    ctx.translate(cw, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+  ctx.restore();
+}
+function capture() {
+  if (!video.videoWidth) return;
+  drawVideoCoverToCanvas();
+
+  // The supplied template already has a transparent photo area.
+  ctx.drawImage(template, 0, 0, 1080, 1920);
+
+  capturedData = canvas.toDataURL('image/png', 1.0);
+  photo.src = capturedData;
+  photo.style.display = 'block';
+  video.style.display = 'none';
+  controls.style.display = 'none';
+  actions.style.display = 'flex';
+}
+
+function retake() {
+  capturedData = null;
+  photo.style.display = 'none';
+  video.style.display = 'block';
+  controls.style.display = 'flex';
+  actions.style.display = 'none';
+}
+
+function download() {
+  if (!capturedData) return;
+  const a = document.createElement('a');
+  a.href = capturedData;
+  a.download = 'pink-october-photo.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+document.getElementById('capture').addEventListener('click', capture);
+document.getElementById('retake').addEventListener('click', retake);
+document.getElementById('download').addEventListener('click', download);
+document.getElementById('switch').addEventListener('click', async () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  await startCamera();
+});
+document.getElementById('flash').addEventListener('click', () => {
+  alert('Camera flash/torch control depends on the phone browser. The app does not force the flash.');
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+startCamera();
+</script>
+</body>
+</html>
